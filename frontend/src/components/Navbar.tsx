@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Sprout, LogOut, User as UserIcon, ShoppingCart, Bell, Menu, X, Shield, Tractor, Store } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCart } from "@/contexts/CartContext";
+import GoogleTranslate from "@/components/common/GoogleTranslate";
 import { useState } from "react";
 
 interface NavbarProps {
@@ -79,6 +80,7 @@ export default function Navbar({ onToggleSidebar }: NavbarProps) {
 
         {/* Navigation Actions */}
         <div className="flex items-center space-x-3 sm:space-x-4">
+          <GoogleTranslate />
           {user ? (
             <>
               {/* Role specific quick link */}
