@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from typing import List, Optional
+from datetime import datetime
+import re
 
-from app.core.database import get_db
+from app.core.database import get_db, get_next_id
 from app.core.security import get_current_user, require_admin
 from app.models.procurement import Procurement, ProcurementSlot, SlotAllocation
 from app.models.collection_center import CollectionCenter
@@ -27,224 +27,263 @@ router = APIRouter(prefix="/procurement", tags=["Procurement"])
 @router.get("/", response_model=List[ProcurementResponse])
 async def list_procurements(
     status: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = select(Procurement, Product.name).join(Product, Procurement.product_id == Product.id)
+    query = {}
     if status:
-        query = query.where(Procurement.status == status)
-    result = await db.execute(query)
-    rows = result.all()
+        query["status"] = status
+
+    cursor = db.procurements.find(query)
+    proc_docs = await cursor.to_list(length=100)
+
+    p_ids = list(set([doc["product_id"] for doc in proc_docs if "product_id" in doc]))
+    prods_cursor = db.products.find({"id": {"$in": p_ids}})
+    prods_list = await prods_cursor.to_list(length=len(p_ids) or 1)
+    prods_map = {p["id"]: p.get("name", "") for p in prods_list}
+
     procurements = []
-    for proc, product_name in rows:
-        p = ProcurementResponse.model_validate(proc)
-        p.product_name = product_name
-        procurements.append(p)
+    for doc in proc_docs:
+        p_obj = Procurement(**doc)
+        p_res = ProcurementResponse.model_validate(p_obj)
+        p_res.product_name = prods_map.get(doc.get("product_id"), "")
+        procurements.append(p_res)
+
     return procurements
 
 
 @router.post("/", response_model=ProcurementResponse, status_code=201)
 async def create_procurement(
     data: ProcurementCreate,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role != "admin":
         raise HTTPException(403, "Admin only")
 
-    proc = Procurement(admin_id=current_user.id, **data.model_dump())
-    db.add(proc)
-    await db.commit()
-    await db.refresh(proc)
+    p_id = await get_next_id(db, "procurements")
+    now = datetime.utcnow()
+    doc = {
+        "id": p_id,
+        "admin_id": current_user.id,
+        **data.model_dump(),
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.procurements.insert_one(doc)
 
-    result = await db.execute(select(Product).where(Product.id == proc.product_id))
-    product = result.scalar_one_or_none()
-
-    p = ProcurementResponse.model_validate(proc)
-    if product:
-        p.product_name = product.name
-    return p
+    product_doc = await db.products.find_one({"id": doc["product_id"]})
+    p_obj = Procurement(**doc)
+    p_res = ProcurementResponse.model_validate(p_obj)
+    if product_doc:
+        p_res.product_name = product_doc.get("name", "")
+    return p_res
 
 
 @router.get("/{procurement_id}", response_model=ProcurementResponse)
 async def get_procurement(
     procurement_id: int,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(Procurement, Product.name)
-        .join(Product, Procurement.product_id == Product.id)
-        .where(Procurement.id == procurement_id)
-    )
-    row = result.first()
-    if not row:
+    doc = await db.procurements.find_one({"id": procurement_id})
+    if not doc:
         raise HTTPException(404, "Procurement not found")
-    proc, product_name = row
-    p = ProcurementResponse.model_validate(proc)
-    p.product_name = product_name
-    return p
+
+    product_doc = await db.products.find_one({"id": doc.get("product_id")})
+    p_obj = Procurement(**doc)
+    p_res = ProcurementResponse.model_validate(p_obj)
+    if product_doc:
+        p_res.product_name = product_doc.get("name", "")
+    return p_res
 
 
 # ── Slots ──────────────────────────────────────────────────────────────────────
 
 @router.get("/slots/all", response_model=List[SlotResponse])
 async def list_all_slots(
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = (
-        select(ProcurementSlot, CollectionCenter.name, Procurement.title, Product.name)
-        .join(CollectionCenter, ProcurementSlot.collection_center_id == CollectionCenter.id)
-        .join(Procurement, ProcurementSlot.procurement_id == Procurement.id)
-        .join(Product, Procurement.product_id == Product.id)
-    )
-    result = await db.execute(query)
-    rows = result.all()
+    cursor = db.procurement_slots.find({})
+    slot_docs = await cursor.to_list(length=100)
+
+    cc_ids = list(set([s["collection_center_id"] for s in slot_docs if "collection_center_id" in s]))
+    proc_ids = list(set([s["procurement_id"] for s in slot_docs if "procurement_id" in s]))
+
+    ccs = await db.collection_centers.find({"id": {"$in": cc_ids}}).to_list(length=len(cc_ids) or 1)
+    cc_map = {c["id"]: c.get("name", "") for c in ccs}
+
+    procs = await db.procurements.find({"id": {"$in": proc_ids}}).to_list(length=len(proc_ids) or 1)
+    proc_map = {p["id"]: p for p in procs}
+
+    p_ids = list(set([p["product_id"] for p in procs if "product_id" in p]))
+    prods = await db.products.find({"id": {"$in": p_ids}}).to_list(length=len(p_ids) or 1)
+    prod_map = {p["id"]: p.get("name", "") for p in prods}
+
     slots = []
-    for slot, cc_name, proc_title, prod_name in rows:
-        s = SlotResponse.model_validate(slot)
-        s.collection_center_name = cc_name
-        s.procurement_title = proc_title
-        s.product_name = prod_name
-        slots.append(s)
+    for doc in slot_docs:
+        s_obj = ProcurementSlot(**doc)
+        s_res = SlotResponse.model_validate(s_obj)
+        s_res.collection_center_name = cc_map.get(doc.get("collection_center_id"), "")
+
+        proc_doc = proc_map.get(doc.get("procurement_id"))
+        if proc_doc:
+            s_res.procurement_title = proc_doc.get("title", "")
+            s_res.product_name = prod_map.get(proc_doc.get("product_id"), "")
+
+        slots.append(s_res)
     return slots
 
 
 @router.get("/slots/my", response_model=List[SlotResponse])
 async def list_my_slots(
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """For farmers: slots they have allocations in."""
     if current_user.role != "farmer":
         raise HTTPException(403, "Farmer access required")
 
-    result = await db.execute(select(Farmer).where(Farmer.user_id == current_user.id))
-    farmer = result.scalar_one_or_none()
-    if not farmer:
+    farmer_doc = await db.farmers.find_one({"user_id": current_user.id})
+    if not farmer_doc:
         raise HTTPException(404, "Farmer profile not found")
 
-    query = (
-        select(ProcurementSlot, CollectionCenter.name, Procurement.title, Product.name)
-        .join(SlotAllocation, SlotAllocation.slot_id == ProcurementSlot.id)
-        .join(CollectionCenter, ProcurementSlot.collection_center_id == CollectionCenter.id)
-        .join(Procurement, ProcurementSlot.procurement_id == Procurement.id)
-        .join(Product, Procurement.product_id == Product.id)
-        .where(SlotAllocation.farmer_id == farmer.id)
-    )
-    result = await db.execute(query)
-    rows = result.all()
+    alloc_cursor = db.slot_allocations.find({"farmer_id": farmer_doc["id"]})
+    allocs = await alloc_cursor.to_list(length=100)
+    slot_ids = [a["slot_id"] for a in allocs if "slot_id" in a]
+
+    slot_docs = await db.procurement_slots.find({"id": {"$in": slot_ids}}).to_list(length=len(slot_ids) or 1)
+
+    cc_ids = list(set([s["collection_center_id"] for s in slot_docs if "collection_center_id" in s]))
+    proc_ids = list(set([s["procurement_id"] for s in slot_docs if "procurement_id" in s]))
+
+    ccs = await db.collection_centers.find({"id": {"$in": cc_ids}}).to_list(length=len(cc_ids) or 1)
+    cc_map = {c["id"]: c.get("name", "") for c in ccs}
+
+    procs = await db.procurements.find({"id": {"$in": proc_ids}}).to_list(length=len(proc_ids) or 1)
+    proc_map = {p["id"]: p for p in procs}
+
+    p_ids = list(set([p["product_id"] for p in procs if "product_id" in p]))
+    prods = await db.products.find({"id": {"$in": p_ids}}).to_list(length=len(p_ids) or 1)
+    prod_map = {p["id"]: p.get("name", "") for p in prods}
+
     slots = []
-    for slot, cc_name, proc_title, prod_name in rows:
-        s = SlotResponse.model_validate(slot)
-        s.collection_center_name = cc_name
-        s.procurement_title = proc_title
-        s.product_name = prod_name
-        slots.append(s)
+    for doc in slot_docs:
+        s_obj = ProcurementSlot(**doc)
+        s_res = SlotResponse.model_validate(s_obj)
+        s_res.collection_center_name = cc_map.get(doc.get("collection_center_id"), "")
+
+        proc_doc = proc_map.get(doc.get("procurement_id"))
+        if proc_doc:
+            s_res.procurement_title = proc_doc.get("title", "")
+            s_res.product_name = prod_map.get(proc_doc.get("product_id"), "")
+
+        slots.append(s_res)
     return slots
 
 
 @router.post("/slots", response_model=SlotResponse, status_code=201)
 async def create_slot(
     data: SlotCreate,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role != "admin":
         raise HTTPException(403, "Admin only")
 
-    slot = ProcurementSlot(**data.model_dump())
-    db.add(slot)
-    await db.commit()
-    await db.refresh(slot)
+    s_id = await get_next_id(db, "procurement_slots")
+    now = datetime.utcnow()
+    doc = {
+        "id": s_id,
+        **data.model_dump(),
+        "allocated_quantity": 0.0,
+        "status": "open",
+        "created_at": now
+    }
+    await db.procurement_slots.insert_one(doc)
 
-    result = await db.execute(
-        select(CollectionCenter.name).where(CollectionCenter.id == slot.collection_center_id)
-    )
-    cc_name = result.scalar_one_or_none()
-    result2 = await db.execute(
-        select(Procurement.title, Product.name)
-        .join(Product, Procurement.product_id == Product.id)
-        .where(Procurement.id == slot.procurement_id)
-    )
-    row = result2.first()
+    cc_doc = await db.collection_centers.find_one({"id": doc["collection_center_id"]})
+    proc_doc = await db.procurements.find_one({"id": doc["procurement_id"]})
 
-    s = SlotResponse.model_validate(slot)
-    s.collection_center_name = cc_name
-    if row:
-        s.procurement_title, s.product_name = row
-    return s
+    s_obj = ProcurementSlot(**doc)
+    s_res = SlotResponse.model_validate(s_obj)
+    if cc_doc:
+        s_res.collection_center_name = cc_doc.get("name", "")
+    if proc_doc:
+        s_res.procurement_title = proc_doc.get("title", "")
+        prod_doc = await db.products.find_one({"id": proc_doc.get("product_id")})
+        if prod_doc:
+            s_res.product_name = prod_doc.get("name", "")
+    return s_res
 
 
 @router.get("/slots/{slot_id}/recommend", response_model=list)
 async def recommend_farmers_for_slot(
     slot_id: int,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Smart allocation: recommend ranked farmers for a slot."""
     if current_user.role != "admin":
         raise HTTPException(403, "Admin only")
 
-    # Load slot
-    result = await db.execute(select(ProcurementSlot).where(ProcurementSlot.id == slot_id))
-    slot = result.scalar_one_or_none()
-    if not slot:
+    slot_doc = await db.procurement_slots.find_one({"id": slot_id})
+    if not slot_doc:
         raise HTTPException(404, "Slot not found")
 
-    # Load procurement + product
-    result = await db.execute(
-        select(Procurement, Product)
-        .join(Product, Procurement.product_id == Product.id)
-        .where(Procurement.id == slot.procurement_id)
-    )
-    row = result.first()
-    if not row:
+    proc_doc = await db.procurements.find_one({"id": slot_doc["procurement_id"]})
+    if not proc_doc:
         raise HTTPException(404, "Procurement not found")
-    procurement, product = row
 
-    # Load collection center
-    result = await db.execute(select(CollectionCenter).where(CollectionCenter.id == slot.collection_center_id))
-    center = result.scalar_one_or_none()
-    if not center:
+    prod_doc = await db.products.find_one({"id": proc_doc["product_id"]})
+    if not prod_doc:
+        raise HTTPException(404, "Product not found")
+
+    center_doc = await db.collection_centers.find_one({"id": slot_doc["collection_center_id"]})
+    if not center_doc:
         raise HTTPException(404, "Collection center not found")
 
-    # Find eligible farmers: grow the required crop AND have available inventory
-    result = await db.execute(
-        select(Farmer, Inventory)
-        .join(Inventory, Inventory.farmer_id == Farmer.id)
-        .where(
-            Inventory.product_id == product.id,
-            Inventory.status == "available",
-            Inventory.quantity_available > 0,
-            Farmer.crops.ilike(f"%{product.name}%")
-        )
-    )
-    rows = result.all()
+    # Find available inventory for this product
+    inv_cursor = db.inventory.find({
+        "product_id": prod_doc["id"],
+        "status": "available",
+        "quantity_available": {"$gt": 0}
+    })
+    inv_docs = await inv_cursor.to_list(length=500)
+    farmer_ids = [inv["farmer_id"] for inv in inv_docs]
 
-    if not rows:
-        return []
+    # Find farmers matching crop & farmer_ids
+    rx = re.compile(prod_doc["name"], re.IGNORECASE)
+    farmers_cursor = db.farmers.find({
+        "id": {"$in": farmer_ids},
+        "crops": rx
+    })
+    farmer_docs = await farmers_cursor.to_list(length=len(farmer_ids) or 1)
+    farmer_map = {f["id"]: f for f in farmer_docs}
 
     candidates = []
-    for farmer, inv in rows:
-        candidates.append({
-            "farmer_id": farmer.id,
-            "name": farmer.name,
-            "phone": farmer.phone,
-            "village": farmer.village or "",
-            "latitude": farmer.latitude or 0,
-            "longitude": farmer.longitude or 0,
-            "reliability_score": farmer.reliability_score,
-            "crops": farmer.crops or "",
-            "available_quantity": inv.quantity_available,
-        })
+    for inv in inv_docs:
+        f = farmer_map.get(inv["farmer_id"])
+        if f:
+            candidates.append({
+                "farmer_id": f["id"],
+                "name": f.get("name", ""),
+                "phone": f.get("phone", ""),
+                "village": f.get("village", "") or "",
+                "latitude": f.get("latitude", 0.0) or 0.0,
+                "longitude": f.get("longitude", 0.0) or 0.0,
+                "reliability_score": f.get("reliability_score", 75.0),
+                "crops": f.get("crops", "") or "",
+                "available_quantity": inv.get("quantity_available", 0.0),
+            })
 
-    slot_dict = {"capacity": slot.capacity, "allocated_quantity": slot.allocated_quantity}
-    center_dict = {"latitude": center.latitude, "longitude": center.longitude}
+    if not candidates:
+        return []
+
+    slot_dict = {"capacity": slot_doc["capacity"], "allocated_quantity": slot_doc.get("allocated_quantity", 0.0)}
+    center_dict = {"latitude": center_doc.get("latitude", 0.0), "longitude": center_doc.get("longitude", 0.0)}
 
     ranked = calculate_allocation_scores(
-        candidates, slot_dict, center_dict, product.name, procurement.required_quantity
+        candidates, slot_dict, center_dict, prod_doc["name"], proc_doc["required_quantity"]
     )
     return format_allocation_results(ranked)
 
@@ -254,170 +293,168 @@ async def allocate_farmer_to_slot(
     slot_id: int,
     farmer_id: int,
     quantity: float,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin creates an allocation for a farmer."""
     if current_user.role != "admin":
         raise HTTPException(403, "Admin only")
 
-    result = await db.execute(select(ProcurementSlot).where(ProcurementSlot.id == slot_id))
-    slot = result.scalar_one_or_none()
-    if not slot:
+    slot_doc = await db.procurement_slots.find_one({"id": slot_id})
+    if not slot_doc:
         raise HTTPException(404, "Slot not found")
 
-    if slot.allocated_quantity + quantity > slot.capacity:
-        raise HTTPException(400, f"Exceeds slot capacity. Available: {slot.capacity - slot.allocated_quantity}")
+    alloc_qty = slot_doc.get("allocated_quantity", 0.0)
+    if alloc_qty + quantity > slot_doc["capacity"]:
+        raise HTTPException(400, f"Exceeds slot capacity. Available: {slot_doc['capacity'] - alloc_qty}")
 
-    result = await db.execute(select(Farmer).where(Farmer.id == farmer_id))
-    farmer = result.scalar_one_or_none()
-    if not farmer:
+    farmer_doc = await db.farmers.find_one({"id": farmer_id})
+    if not farmer_doc:
         raise HTTPException(404, "Farmer not found")
 
-    alloc = SlotAllocation(
-        slot_id=slot_id,
-        farmer_id=farmer_id,
-        allocated_quantity=quantity,
-        status="pending"
-    )
-    db.add(alloc)
+    a_id = await get_next_id(db, "slot_allocations")
+    now = datetime.utcnow()
+    alloc_doc = {
+        "id": a_id,
+        "slot_id": slot_id,
+        "farmer_id": farmer_id,
+        "allocated_quantity": quantity,
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now
+    }
+    await db.slot_allocations.insert_one(alloc_doc)
 
-    # Notify farmer
-    notif = Notification(
-        user_id=farmer.user_id,
-        title="New Procurement Slot",
-        message=f"You have been allocated to a procurement slot. Please confirm.",
-        notification_type="procurement",
-        link=f"/farmer/procurement"
-    )
-    db.add(notif)
+    n_id = await get_next_id(db, "notifications")
+    await db.notifications.insert_one({
+        "id": n_id,
+        "user_id": farmer_doc["user_id"],
+        "title": "New Procurement Slot",
+        "message": "You have been allocated to a procurement slot. Please confirm.",
+        "notification_type": "procurement",
+        "is_read": False,
+        "link": "/farmer/procurement",
+        "created_at": now
+    })
 
-    await db.commit()
-    await db.refresh(alloc)
-
-    a = AllocationResponse.model_validate(alloc)
-    a.farmer_name = farmer.name
-    a.farmer_phone = farmer.phone
-    a.farmer_village = farmer.village
-    return a
+    a_obj = SlotAllocation(**alloc_doc)
+    a_res = AllocationResponse.model_validate(a_obj)
+    a_res.farmer_name = farmer_doc.get("name", "")
+    a_res.farmer_phone = farmer_doc.get("phone", "")
+    a_res.farmer_village = farmer_doc.get("village", "")
+    return a_res
 
 
 @router.patch("/allocations/{allocation_id}/admin-action", response_model=AllocationResponse)
 async def admin_allocation_action(
     allocation_id: int,
     action: AllocationAction,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Admin approves or rejects an allocation."""
     if current_user.role != "admin":
         raise HTTPException(403, "Admin only")
 
-    result = await db.execute(select(SlotAllocation).where(SlotAllocation.id == allocation_id))
-    alloc = result.scalar_one_or_none()
-    if not alloc:
+    alloc_doc = await db.slot_allocations.find_one({"id": allocation_id})
+    if not alloc_doc:
         raise HTTPException(404, "Allocation not found")
 
+    now = datetime.utcnow()
     if action.action == "approve":
-        alloc.status = "approved"
-        if action.quantity:
-            alloc.allocated_quantity = action.quantity
-
-        # Update slot allocated quantity
-        slot_result = await db.execute(
-            select(ProcurementSlot).where(ProcurementSlot.id == alloc.slot_id).with_for_update()
+        new_qty = action.quantity if action.quantity else alloc_doc["allocated_quantity"]
+        await db.slot_allocations.update_one(
+            {"id": allocation_id},
+            {"$set": {"status": "approved", "allocated_quantity": new_qty, "updated_at": now}}
         )
-        slot = slot_result.scalar_one_or_none()
-        if slot:
-            slot.allocated_quantity += alloc.allocated_quantity
 
-        # Notify farmer
-        farmer_result = await db.execute(select(Farmer).where(Farmer.id == alloc.farmer_id))
-        farmer = farmer_result.scalar_one_or_none()
-        if farmer:
-            notif = Notification(
-                user_id=farmer.user_id,
-                title="Allocation Approved",
-                message=f"Your procurement slot allocation has been approved! Please confirm your participation.",
-                notification_type="allocation",
-                link="/farmer/procurement"
+        slot_doc = await db.procurement_slots.find_one({"id": alloc_doc["slot_id"]})
+        if slot_doc:
+            await db.procurement_slots.update_one(
+                {"id": slot_doc["id"]},
+                {"$inc": {"allocated_quantity": new_qty}}
             )
-            db.add(notif)
+
+        farmer_doc = await db.farmers.find_one({"id": alloc_doc["farmer_id"]})
+        if farmer_doc:
+            n_id = await get_next_id(db, "notifications")
+            await db.notifications.insert_one({
+                "id": n_id,
+                "user_id": farmer_doc["user_id"],
+                "title": "Allocation Approved",
+                "message": "Your procurement slot allocation has been approved! Please confirm your participation.",
+                "notification_type": "allocation",
+                "is_read": False,
+                "link": "/farmer/procurement",
+                "created_at": now
+            })
     elif action.action == "reject":
-        alloc.status = "rejected"
-        alloc.admin_notes = action.notes
+        await db.slot_allocations.update_one(
+            {"id": allocation_id},
+            {"$set": {"status": "rejected", "admin_notes": action.notes, "updated_at": now}}
+        )
     else:
         raise HTTPException(400, "Action must be 'approve' or 'reject'")
 
-    await db.commit()
-    await db.refresh(alloc)
+    updated_alloc = await db.slot_allocations.find_one({"id": allocation_id})
+    farmer_doc = await db.farmers.find_one({"id": updated_alloc["farmer_id"]})
 
-    result = await db.execute(select(Farmer).where(Farmer.id == alloc.farmer_id))
-    farmer = result.scalar_one_or_none()
-
-    a = AllocationResponse.model_validate(alloc)
-    if farmer:
-        a.farmer_name = farmer.name
-        a.farmer_phone = farmer.phone
-        a.farmer_village = farmer.village
-    return a
+    a_res = AllocationResponse.model_validate(SlotAllocation(**updated_alloc))
+    if farmer_doc:
+        a_res.farmer_name = farmer_doc.get("name", "")
+        a_res.farmer_phone = farmer_doc.get("phone", "")
+        a_res.farmer_village = farmer_doc.get("village", "")
+    return a_res
 
 
 @router.patch("/allocations/{allocation_id}/farmer-action", response_model=AllocationResponse)
 async def farmer_allocation_action(
     allocation_id: int,
     action: FarmerAllocationAction,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Farmer confirms or cancels their slot allocation."""
     if current_user.role != "farmer":
         raise HTTPException(403, "Farmer access required")
 
-    result = await db.execute(select(SlotAllocation).where(SlotAllocation.id == allocation_id))
-    alloc = result.scalar_one_or_none()
-    if not alloc:
+    alloc_doc = await db.slot_allocations.find_one({"id": allocation_id})
+    if not alloc_doc:
         raise HTTPException(404, "Allocation not found")
 
-    # Verify this farmer owns the allocation
-    farmer_result = await db.execute(select(Farmer).where(Farmer.user_id == current_user.id))
-    farmer = farmer_result.scalar_one_or_none()
-    if not farmer or alloc.farmer_id != farmer.id:
+    farmer_doc = await db.farmers.find_one({"user_id": current_user.id})
+    if not farmer_doc or alloc_doc["farmer_id"] != farmer_doc["id"]:
         raise HTTPException(403, "Not your allocation")
 
-    if alloc.status not in ["approved"]:
-        raise HTTPException(400, f"Can only confirm approved allocations. Current status: {alloc.status}")
+    if alloc_doc.get("status") not in ["approved"]:
+        raise HTTPException(400, f"Can only confirm approved allocations. Current status: {alloc_doc.get('status')}")
 
+    now = datetime.utcnow()
     if action.action == "confirm":
-        alloc.status = "confirmed"
-        alloc.farmer_notes = action.notes
-        # Update farmer reliability score
-        farmer.reliability_score = min(100.0, farmer.reliability_score + 1.0)
-    elif action.action == "cancel":
-        alloc.status = "cancelled"
-        alloc.farmer_notes = action.notes
-        # Revert slot capacity
-        slot_result = await db.execute(
-            select(ProcurementSlot).where(ProcurementSlot.id == alloc.slot_id).with_for_update()
+        await db.slot_allocations.update_one(
+            {"id": allocation_id},
+            {"$set": {"status": "confirmed", "farmer_notes": action.notes, "updated_at": now}}
         )
-        slot = slot_result.scalar_one_or_none()
-        if slot:
-            slot.allocated_quantity -= alloc.allocated_quantity
-            if slot.allocated_quantity < 0:
-                slot.allocated_quantity = 0
-        # Reduce reliability
-        farmer.reliability_score = max(0.0, farmer.reliability_score - 2.0)
+        new_score = min(100.0, farmer_doc.get("reliability_score", 75.0) + 1.0)
+        await db.farmers.update_one({"id": farmer_doc["id"]}, {"$set": {"reliability_score": new_score}})
+    elif action.action == "cancel":
+        await db.slot_allocations.update_one(
+            {"id": allocation_id},
+            {"$set": {"status": "cancelled", "farmer_notes": action.notes, "updated_at": now}}
+        )
+        slot_doc = await db.procurement_slots.find_one({"id": alloc_doc["slot_id"]})
+        if slot_doc:
+            new_alloc_qty = max(0.0, slot_doc.get("allocated_quantity", 0.0) - alloc_doc["allocated_quantity"])
+            await db.procurement_slots.update_one({"id": slot_doc["id"]}, {"$set": {"allocated_quantity": new_alloc_qty}})
+
+        new_score = max(0.0, farmer_doc.get("reliability_score", 75.0) - 2.0)
+        await db.farmers.update_one({"id": farmer_doc["id"]}, {"$set": {"reliability_score": new_score}})
     else:
         raise HTTPException(400, "Action must be 'confirm' or 'cancel'")
 
-    await db.commit()
-    await db.refresh(alloc)
-
-    a = AllocationResponse.model_validate(alloc)
-    a.farmer_name = farmer.name
-    a.farmer_phone = farmer.phone
-    a.farmer_village = farmer.village
-    return a
+    updated_alloc = await db.slot_allocations.find_one({"id": allocation_id})
+    a_res = AllocationResponse.model_validate(SlotAllocation(**updated_alloc))
+    a_res.farmer_name = farmer_doc.get("name", "")
+    a_res.farmer_phone = farmer_doc.get("phone", "")
+    a_res.farmer_village = farmer_doc.get("village", "")
+    return a_res
 
 
 @router.get("/allocations/", response_model=List[AllocationResponse])
@@ -425,34 +462,38 @@ async def list_allocations(
     slot_id: Optional[int] = None,
     farmer_id: Optional[int] = None,
     status: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = select(SlotAllocation, Farmer.name, Farmer.phone, Farmer.village).join(
-        Farmer, SlotAllocation.farmer_id == Farmer.id
-    )
-
+    query = {}
     if current_user.role == "farmer":
-        farmer_result = await db.execute(select(Farmer).where(Farmer.user_id == current_user.id))
-        farmer = farmer_result.scalar_one_or_none()
-        if farmer:
-            query = query.where(SlotAllocation.farmer_id == farmer.id)
-    else:
-        if farmer_id:
-            query = query.where(SlotAllocation.farmer_id == farmer_id)
+        farmer_doc = await db.farmers.find_one({"user_id": current_user.id})
+        if farmer_doc:
+            query["farmer_id"] = farmer_doc["id"]
+    elif farmer_id:
+        query["farmer_id"] = farmer_id
 
     if slot_id:
-        query = query.where(SlotAllocation.slot_id == slot_id)
+        query["slot_id"] = slot_id
     if status:
-        query = query.where(SlotAllocation.status == status)
+        query["status"] = status
 
-    result = await db.execute(query)
-    rows = result.all()
+    cursor = db.slot_allocations.find(query)
+    alloc_docs = await cursor.to_list(length=200)
+
+    f_ids = list(set([a["farmer_id"] for a in alloc_docs if "farmer_id" in a]))
+    farmers = await db.farmers.find({"id": {"$in": f_ids}}).to_list(length=len(f_ids) or 1)
+    f_map = {f["id"]: f for f in farmers}
+
     allocations = []
-    for alloc, name, phone, village in rows:
-        a = AllocationResponse.model_validate(alloc)
-        a.farmer_name = name
-        a.farmer_phone = phone
-        a.farmer_village = village
-        allocations.append(a)
+    for doc in alloc_docs:
+        a_obj = SlotAllocation(**doc)
+        a_res = AllocationResponse.model_validate(a_obj)
+        f_doc = f_map.get(doc.get("farmer_id"))
+        if f_doc:
+            a_res.farmer_name = f_doc.get("name", "")
+            a_res.farmer_phone = f_doc.get("phone", "")
+            a_res.farmer_village = f_doc.get("village", "")
+        allocations.append(a_res)
+
     return allocations

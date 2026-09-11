@@ -8,6 +8,8 @@ interface AuthContextType {
   user: User | null;
   farmerProfile: Farmer | null;
   buyerProfile: Buyer | null;
+  farmer: Farmer | null;
+  buyer: Buyer | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
@@ -71,7 +73,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, farmerProfile, buyerProfile, isLoading, login, logout, refreshProfile }}
+      value={{
+        user,
+        farmerProfile,
+        buyerProfile,
+        farmer: farmerProfile,
+        buyer: buyerProfile,
+        isLoading,
+        login,
+        logout,
+        refreshProfile,
+      }}
     >
       {children}
     </AuthContext.Provider>

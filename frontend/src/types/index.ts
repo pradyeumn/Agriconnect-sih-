@@ -68,6 +68,7 @@ export interface InventoryItem {
   created_at?: string;
   updated_at?: string;
   product?: Product;
+  farmer?: Farmer;
   farmer_name?: string;
   farmer_location?: string;
   farmer_lat?: number;
@@ -98,6 +99,7 @@ export interface Order {
   updated_at?: string;
   items: OrderItem[];
   buyer_name?: string;
+  buyer?: Buyer;
 }
 
 export interface CollectionCenter {
@@ -127,6 +129,8 @@ export interface Procurement {
   status: string;
   created_at?: string;
   product_name?: string;
+  product?: Product;
+  slots?: ProcurementSlot[];
 }
 
 export interface ProcurementSlot {
@@ -134,6 +138,7 @@ export interface ProcurementSlot {
   procurement_id: number;
   collection_center_id: number;
   slot_date: string;
+  date?: string;
   start_time?: string;
   end_time?: string;
   capacity: number;
@@ -141,7 +146,9 @@ export interface ProcurementSlot {
   status: string;
   notes?: string;
   collection_center_name?: string;
+  collection_center?: CollectionCenter;
   procurement_title?: string;
+  procurement?: Procurement;
   product_name?: string;
   allocations?: SlotAllocation[];
 }
@@ -160,13 +167,17 @@ export interface SlotAllocation {
   farmer_name?: string;
   farmer_phone?: string;
   farmer_village?: string;
+  farmer?: Farmer;
+  slot?: ProcurementSlot;
 }
 
 export interface Notification {
   id: number;
+  user_id?: number;
   title: string;
   message: string;
   notification_type?: string;
+  type?: string;
   is_read: boolean;
   link?: string;
   created_at?: string;

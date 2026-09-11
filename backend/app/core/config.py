@@ -4,8 +4,8 @@ from typing import List
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/agriconnect"
-    SYNC_DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/agriconnect"
+    MONGODB_URL: str = "mongodb://localhost:27017"
+    MONGODB_DB_NAME: str = "agriconnect"
 
     # JWT
     SECRET_KEY: str = "your-super-secret-key-change-in-production-min-32-chars"

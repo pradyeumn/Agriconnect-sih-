@@ -49,13 +49,13 @@ export function CropDistributionChart({ data }: { data: { name: string; quantity
             paddingAngle={4}
             dataKey="quantity"
             nameKey="name"
-            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+            label={({ name, percent }: any) => `${name}: ${((percent || 0) * 100).toFixed(0)}%`}
           >
             {chartData.map((_, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}
           </Pie>
-          <Tooltip formatter={(value: number) => [`${value} quintals`, "Quantity"]} />
+          <Tooltip formatter={(value: any) => [`${value} quintals`, "Quantity"]} />
         </PieChart>
       </ResponsiveContainer>
     </div>

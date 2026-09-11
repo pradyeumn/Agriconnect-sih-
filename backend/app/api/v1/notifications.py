@@ -1,10 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
 
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -29,67 +26,51 @@ class NotificationResponse(BaseModel):
 @router.get("/", response_model=List[NotificationResponse])
 async def get_my_notifications(
     unread_only: bool = False,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = select(Notification).where(Notification.user_id == current_user.id)
+    query = {"user_id": current_user.id}
     if unread_only:
-        query = query.where(Notification.is_read == False)
-    query = query.order_by(Notification.created_at.desc()).limit(50)
-    result = await db.execute(query)
-    notifications = result.scalars().all()
-    return [NotificationResponse.model_validate(n) for n in notifications]
+        query["is_read"] = False
+
+    cursor = db.notifications.find(query).sort("created_at", -1).limit(50)
+    docs = await cursor.to_list(length=50)
+    return [NotificationResponse.model_validate(Notification(**n)) for n in docs]
 
 
 @router.patch("/{notification_id}/read")
 async def mark_notification_read(
     notification_id: int,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(Notification).where(
-            Notification.id == notification_id,
-            Notification.user_id == current_user.id
-        )
-    )
-    notif = result.scalar_one_or_none()
-    if not notif:
+    doc = await db.notifications.find_one({"id": notification_id, "user_id": current_user.id})
+    if not doc:
         raise HTTPException(404, "Notification not found")
-    notif.is_read = True
-    await db.commit()
+
+    await db.notifications.update_one(
+        {"id": notification_id, "user_id": current_user.id},
+        {"$set": {"is_read": True}}
+    )
     return {"message": "Marked as read"}
 
 
 @router.patch("/read-all")
 async def mark_all_read(
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(Notification).where(
-            Notification.user_id == current_user.id,
-            Notification.is_read == False
-        )
+    result = await db.notifications.update_many(
+        {"user_id": current_user.id, "is_read": False},
+        {"$set": {"is_read": True}}
     )
-    notifications = result.scalars().all()
-    for n in notifications:
-        n.is_read = True
-    await db.commit()
-    return {"message": f"Marked {len(notifications)} notifications as read"}
+    return {"message": f"Marked {result.modified_count} notifications as read"}
 
 
 @router.get("/count")
 async def get_unread_count(
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    from sqlalchemy import func
-    result = await db.execute(
-        select(func.count(Notification.id)).where(
-            Notification.user_id == current_user.id,
-            Notification.is_read == False
-        )
-    )
-    count = result.scalar()
+    count = await db.notifications.count_documents({"user_id": current_user.id, "is_read": False})
     return {"unread_count": count}
