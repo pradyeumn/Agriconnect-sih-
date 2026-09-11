@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Calendar, CheckCircle2, XCircle, Building2, MapPin, Award } from "lucide-react";
-import { procurementApi } from "@/lib/api";
+import { procurementApi, formatErrorMessage } from "@/lib/api";
 import { SlotAllocation } from "@/types";
 import toast from "react-hot-toast";
 
@@ -31,7 +31,7 @@ export default function FarmerProcurementPage() {
       toast.success("Slot intake confirmed! Delivery passcode generated.");
       loadAllocations();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to confirm slot");
+      toast.error(formatErrorMessage(err, "Failed to confirm slot"));
     }
   };
 

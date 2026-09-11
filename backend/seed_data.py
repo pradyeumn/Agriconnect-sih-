@@ -22,7 +22,8 @@ async def seed():
 
     kwargs = {}
     if "mongodb+srv://" in settings.MONGODB_URL:
-        kwargs["tlsCAFile"] = certifi.where()
+        kwargs["tls"] = True
+        kwargs["tlsAllowInvalidCertificates"] = True
 
     client = AsyncIOMotorClient(settings.MONGODB_URL, **kwargs)
     db = client[settings.MONGODB_DB_NAME]

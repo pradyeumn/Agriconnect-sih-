@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Calendar, Plus, CheckCircle, Clock, FileText, AlertCircle } from "lucide-react";
-import { procurementApi, productsApi } from "@/lib/api";
+import { procurementApi, productsApi, formatErrorMessage } from "@/lib/api";
 import { Procurement, Product } from "@/types";
 import toast from "react-hot-toast";
 
@@ -50,7 +50,7 @@ export default function AdminProcurementPage() {
       setShowModal(false);
       loadData();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to create procurement requirement");
+      toast.error(formatErrorMessage(err, "Failed to create procurement requirement"));
     }
   };
 
