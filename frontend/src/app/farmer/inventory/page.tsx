@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Package, Plus, Trash2, Edit, CheckCircle, AlertCircle, Calendar } from "lucide-react";
-import { inventoryApi, productsApi } from "@/lib/api";
-import { InventoryItem, Product } from "@/types";
+import { inventoryApi, productsApi, formatErrorMessage } from "@/lib/api";
+import { Product, InventoryItem } from "@/types";
 import toast from "react-hot-toast";
 
 export default function FarmerInventoryPage() {
@@ -54,7 +54,7 @@ export default function FarmerInventoryPage() {
       setShowModal(false);
       loadData();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to create produce listing");
+      toast.error(formatErrorMessage(err, "Failed to create produce listing"));
     }
   };
 

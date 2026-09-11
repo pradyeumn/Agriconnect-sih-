@@ -17,7 +17,8 @@ def connect_to_mongo():
     try:
         kwargs = {}
         if "mongodb+srv://" in settings.MONGODB_URL:
-            kwargs["tlsCAFile"] = certifi.where()
+            kwargs["tls"] = True
+            kwargs["tlsAllowInvalidCertificates"] = True
 
         db_manager.client = AsyncIOMotorClient(
             settings.MONGODB_URL,

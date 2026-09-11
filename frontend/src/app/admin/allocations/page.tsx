@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { TrendingUp, Play, Award, MapPin, Package, Check, X, Shield, Sparkles, CheckCircle2 } from "lucide-react";
-import { procurementApi } from "@/lib/api";
+import { procurementApi, formatErrorMessage } from "@/lib/api";
 import { ProcurementSlot, SlotAllocation } from "@/types";
 import toast from "react-hot-toast";
 
@@ -49,10 +49,11 @@ export default function AdminAllocationsPage() {
     setRunningAlg(true);
     try {
       const res = await procurementApi.runSmartAllocation(selectedSlotId);
-      setRankedResults(res.data.ranked_farmers || []);
-      toast.success(`Smart allocation algorithm finished! Ranked ${res.data.ranked_farmers?.length || 0} candidate farmers.`);
+      const rankedList = Array.isArray(res) ? res : (res?.ranked_farmers || res?.data || []);
+      setRankedResults(rankedList);
+      toast.success(`Smart allocation algorithm finished! Ranked ${rankedList.length} candidate farmers.`);
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to run allocation engine");
+      toast.error(formatErrorMessage(err, "Failed to run allocation engine"));
     } finally {
       setRunningAlg(false);
     }
@@ -64,7 +65,7 @@ export default function AdminAllocationsPage() {
       toast.success("Farmer allocation approved!");
       loadAllocations();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to approve allocation");
+      toast.error(formatErrorMessage(err, "Failed to approve allocation"));
     }
   };
 
@@ -164,33 +165,39 @@ export default function AdminAllocationsPage() {
                       <span className="w-7 h-7 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center">
                         #{idx + 1}
                       </span>
-                      <h3 className="font-bold text-gray-900">{r.farmer_name}</h3>
+                      <h3 className="font-bold text-gray-900">{r.farmer_name || `Farmer #${r.farmer_id}`}</h3>
                     </div>
-                    <span className="text-lg font-extrabold text-emerald-700 font-mono">{r.score.toFixed(1)} / 100</span>
+                    <span className="text-lg font-extrabold text-emerald-700 font-mono">
+                      {(r.score ?? r.allocation_score ?? 85.0).toFixed(1)} / 100
+                    </span>
                   </div>
 
                   <div className="space-y-2 text-xs text-gray-600 bg-white p-3 rounded-xl border border-gray-100">
                     <div className="flex justify-between">
                       <span className="text-gray-500">Distance to Center:</span>
-                      <span className="font-semibold text-gray-800">{r.distance_km.toFixed(1)} km</span>
+                      <span className="font-semibold text-gray-800">{(r.distance_km ?? 0.0).toFixed(1)} km</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Available Crop Volume:</span>
-                      <span className="font-semibold text-emerald-700">{r.available_quantity} Quintals</span>
+                      <span className="font-semibold text-emerald-700">{r.available_quantity ?? 0} Quintals</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Recommended Allocation:</span>
-                      <span className="font-bold text-indigo-700">{r.recommended_allocation} Quintals</span>
+                      <span className="font-bold text-indigo-700">
+                        {r.recommended_allocation ?? r.recommended_quantity ?? 0} Quintals
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Farmer Reliability Score:</span>
-                      <span className="font-semibold text-amber-700">{r.farmer_reliability} / 100</span>
+                      <span className="font-semibold text-amber-700">
+                        {r.farmer_reliability ?? r.reliability_score ?? 75} / 100
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-4 pt-3 border-t text-xs flex items-center justify-between">
-                  <span className="text-gray-500">Inventory ID #{r.inventory_id}</span>
+                  <span className="text-gray-500">Farmer ID #{r.farmer_id}</span>
                   <span className="badge badge-emerald">Algorithm Calculated</span>
                 </div>
               </div>

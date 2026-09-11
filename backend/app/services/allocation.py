@@ -156,8 +156,11 @@ def format_allocation_results(candidates: List[AllocationCandidate]) -> List[dic
             "available_quantity": c.available_quantity,
             "distance_km": round(c.distance_km, 2),
             "reliability_score": c.reliability_score,
+            "farmer_reliability": c.reliability_score,
             "allocation_score": round(c.allocation_score, 1),
+            "score": round(c.allocation_score, 1),
             "recommended_quantity": round(c.recommended_quantity, 2),
+            "recommended_allocation": round(c.recommended_quantity, 2),
             "rank": idx + 1,
         }
         for idx, c in enumerate(candidates)

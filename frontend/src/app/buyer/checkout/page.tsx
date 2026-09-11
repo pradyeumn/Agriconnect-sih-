@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ShoppingBag, MapPin, CreditCard, ArrowRight, ShieldCheck, CheckCircle2 } from "lucide-react";
 import { useCart } from "@/contexts/CartContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { ordersApi } from "@/lib/api";
+import { ordersApi, formatErrorMessage } from "@/lib/api";
 import toast from "react-hot-toast";
 
 export default function BuyerCheckoutPage() {
@@ -45,7 +45,7 @@ export default function BuyerCheckoutPage() {
       clearCart();
       router.push("/buyer/orders");
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to place order. Please try again.");
+      toast.error(formatErrorMessage(err, "Failed to place order. Please try again."));
     } finally {
       setLoading(false);
     }
