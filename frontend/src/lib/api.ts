@@ -8,7 +8,6 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// Attach JWT token to every request
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("agriconnect_token");
@@ -19,7 +18,6 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 globally
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -32,10 +30,26 @@ api.interceptors.response.use(
   }
 );
 
+export function formatErrorMessage(err: any, fallback = "An error occurred"): string {
+  if (!err) return fallback;
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d: any) => (typeof d === "string" ? d : d.msg || d.message || JSON.stringify(d))).join(", ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.msg || detail.message || JSON.stringify(detail);
+  }
+  return err.message || fallback;
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const authApi = {
-  registerFarmer: (userData: Record<string, unknown>, farmerData: Record<string, unknown>) =>
-    api.post("/auth/register/farmer", userData, { params: farmerData }).then((r) => r.data),
+  registerFarmer: (payload: Record<string, unknown>) =>
+    api.post("/auth/register/farmer", payload).then((r) => r.data),
+
+  registerBuyer: (payload: Record<string, unknown>) =>
+    api.post("/auth/register/buyer", payload).then((r) => r.data),
 
   loginFarmerPost: (user: Record<string, unknown>, farmer: Record<string, unknown>) =>
     api.post("/auth/register/farmer", { ...user, ...farmer }),
@@ -51,10 +65,16 @@ export const farmersApi = {
   list: (params?: Record<string, string>) =>
     api.get("/farmers/", { params }).then((r) => r.data),
 
+  getAll: (params?: Record<string, string>) =>
+    api.get("/farmers/", { params }),
+
   me: () => api.get("/farmers/me").then((r) => r.data),
 
   update: (data: Record<string, unknown>) =>
     api.put("/farmers/me", data).then((r) => r.data),
+
+  updateScore: (id: number, score: number) =>
+    api.put("/farmers/me", { reliability_score: score }).then((r) => r.data),
 
   get: (id: number) => api.get(`/farmers/${id}`).then((r) => r.data),
 };
@@ -63,6 +83,9 @@ export const farmersApi = {
 export const buyersApi = {
   list: (params?: Record<string, string>) =>
     api.get("/buyers/", { params }).then((r) => r.data),
+
+  getAll: (params?: Record<string, string>) =>
+    api.get("/buyers/", { params }),
 
   me: () => api.get("/buyers/me").then((r) => r.data),
 
@@ -75,6 +98,7 @@ export const buyersApi = {
 // ── Products ──────────────────────────────────────────────────────────────────
 export const productsApi = {
   list: () => api.get("/products/").then((r) => r.data),
+  getAll: () => api.get("/products/"),
   create: (data: Record<string, unknown>) =>
     api.post("/products/", data).then((r) => r.data),
 };
@@ -83,6 +107,9 @@ export const productsApi = {
 export const inventoryApi = {
   list: (params?: Record<string, unknown>) =>
     api.get("/inventory/", { params }).then((r) => r.data),
+
+  getAll: (params?: Record<string, unknown>) =>
+    api.get("/inventory/", { params }),
 
   create: (data: Record<string, unknown>) =>
     api.post("/inventory/", data).then((r) => r.data),
@@ -103,9 +130,15 @@ export const ordersApi = {
   list: (params?: Record<string, string>) =>
     api.get("/orders/", { params }).then((r) => r.data),
 
+  getAll: (params?: Record<string, string>) =>
+    api.get("/orders/", { params }),
+
   get: (id: number) => api.get(`/orders/${id}`).then((r) => r.data),
 
   place: (data: Record<string, unknown>) =>
+    api.post("/orders/", data).then((r) => r.data),
+
+  create: (data: Record<string, unknown>) =>
     api.post("/orders/", data).then((r) => r.data),
 
   updateStatus: (id: number, status: string, notes?: string) =>
@@ -122,6 +155,12 @@ export const procurementApi = {
   list: (params?: Record<string, string>) =>
     api.get("/procurement/", { params }).then((r) => r.data),
 
+  getAllRequirements: (params?: Record<string, string>) =>
+    api.get("/procurement/", { params }),
+
+  createRequirement: (data: Record<string, unknown>) =>
+    api.post("/procurement/", data).then((r) => r.data),
+
   create: (data: Record<string, unknown>) =>
     api.post("/procurement/", data).then((r) => r.data),
 
@@ -130,10 +169,15 @@ export const procurementApi = {
   // Slots
   listAllSlots: () => api.get("/procurement/slots/all").then((r) => r.data),
 
+  getAllSlots: () => api.get("/procurement/slots/all"),
+
   listMySlots: () => api.get("/procurement/slots/my").then((r) => r.data),
 
   createSlot: (data: Record<string, unknown>) =>
     api.post("/procurement/slots", data).then((r) => r.data),
+
+  runSmartAllocation: (slotId: number) =>
+    api.get(`/procurement/slots/${slotId}/recommend`).then((r) => r.data),
 
   recommendFarmers: (slotId: number) =>
     api.get(`/procurement/slots/${slotId}/recommend`).then((r) => r.data),
@@ -147,6 +191,21 @@ export const procurementApi = {
   listAllocations: (params?: Record<string, unknown>) =>
     api.get("/procurement/allocations/", { params }).then((r) => r.data),
 
+  getAllAllocations: (params?: Record<string, unknown>) =>
+    api.get("/procurement/allocations/", { params }),
+
+  getFarmerAllocations: () =>
+    api.get("/procurement/allocations/"),
+
+  confirmFarmerAllocation: (id: number, notes?: string) =>
+    api.patch(`/procurement/allocations/${id}/farmer-action`, { action: "confirm", notes }).then((r) => r.data),
+
+  approveAllocation: (id: number, quantity?: number, notes?: string) =>
+    api.patch(`/procurement/allocations/${id}/admin-action`, { action: "approve", quantity, notes }).then((r) => r.data),
+
+  rejectAllocation: (id: number, notes?: string) =>
+    api.patch(`/procurement/allocations/${id}/admin-action`, { action: "reject", notes }).then((r) => r.data),
+
   adminAllocationAction: (id: number, action: string, notes?: string, quantity?: number) =>
     api.patch(`/procurement/allocations/${id}/admin-action`, {
       action, notes, quantity,
@@ -159,6 +218,8 @@ export const procurementApi = {
 // ── Collection Centers ────────────────────────────────────────────────────────
 export const collectionCentersApi = {
   list: () => api.get("/collection-centers/").then((r) => r.data),
+
+  getAll: () => api.get("/collection-centers/"),
 
   create: (data: Record<string, unknown>) =>
     api.post("/collection-centers/", data).then((r) => r.data),
@@ -174,7 +235,12 @@ export const notificationsApi = {
   list: (unreadOnly = false) =>
     api.get("/notifications/", { params: { unread_only: unreadOnly } }).then((r) => r.data),
 
+  getAll: (unreadOnly = false) =>
+    api.get("/notifications/", { params: { unread_only: unreadOnly } }),
+
   markRead: (id: number) => api.patch(`/notifications/${id}/read`).then((r) => r.data),
+
+  markAsRead: (id: number) => api.patch(`/notifications/${id}/read`).then((r) => r.data),
 
   markAllRead: () => api.patch("/notifications/read-all").then((r) => r.data),
 
@@ -183,7 +249,9 @@ export const notificationsApi = {
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 export const analyticsApi = {
+  getDashboardOverview: () => api.get("/analytics/admin/overview"),
   adminOverview: () => api.get("/analytics/admin/overview").then((r) => r.data),
+  getCropAnalytics: () => api.get("/analytics/admin/crop-inventory"),
   cropInventory: () => api.get("/analytics/admin/crop-inventory").then((r) => r.data),
   monthlySales: () => api.get("/analytics/admin/monthly-sales").then((r) => r.data),
   locationSupply: () => api.get("/analytics/admin/location-supply").then((r) => r.data),

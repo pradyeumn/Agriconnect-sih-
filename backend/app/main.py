@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 import os
 
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import connect_to_mongo, close_mongo_connection, init_db
 from app.api.v1 import auth, farmers, buyers, products, inventory, orders, procurement, collection_centers, notifications, analytics
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    connect_to_mongo()
     await init_db()
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(f"{settings.UPLOAD_DIR}/farmers", exist_ok=True)
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI):
     print("✅ AgriConnect API started successfully")
     yield
     # Shutdown
+    close_mongo_connection()
     print("👋 AgriConnect API shutting down")
 
 

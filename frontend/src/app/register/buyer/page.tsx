@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Store, MapPin, ArrowRight, User, Phone, Mail, Lock, Building } from "lucide-react";
 import LeafletMap from "@/components/maps/LeafletMap";
-import { authApi } from "@/lib/api";
+import { authApi, formatErrorMessage } from "@/lib/api";
 import toast from "react-hot-toast";
 
 export default function RegisterBuyerPage() {
@@ -55,7 +55,7 @@ export default function RegisterBuyerPage() {
       toast.success("Buyer registration successful! Please log in.");
       router.push("/login");
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Registration failed. Please check inputs.");
+      toast.error(formatErrorMessage(err, "Registration failed. Please check inputs."));
     } finally {
       setLoading(false);
     }

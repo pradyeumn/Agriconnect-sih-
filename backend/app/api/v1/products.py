@@ -1,12 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List
-from pydantic import BaseModel
+from typing import List, Optional
 from datetime import datetime
-from typing import Optional
 
-from app.core.database import get_db
+from app.core.database import get_db, get_next_id
 from app.core.security import get_current_user
 from app.models.product import Product
 from app.models.user import User
@@ -17,37 +13,40 @@ router = APIRouter(prefix="/products", tags=["Products"])
 
 @router.get("/", response_model=List[ProductResponse])
 async def list_products(
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(select(Product).order_by(Product.category, Product.name))
-    products = result.scalars().all()
-    return [ProductResponse.model_validate(p) for p in products]
+    cursor = db.products.find({}).sort([("category", 1), ("name", 1)])
+    docs = await cursor.to_list(length=200)
+    return [ProductResponse.model_validate(Product(**p)) for p in docs]
 
 
 @router.post("/", response_model=ProductResponse, status_code=201)
 async def create_product(
     data: ProductCreate,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.role != "admin":
         raise HTTPException(403, "Admin only")
-    product = Product(**data.model_dump())
-    db.add(product)
-    await db.commit()
-    await db.refresh(product)
-    return ProductResponse.model_validate(product)
+
+    p_id = await get_next_id(db, "products")
+    doc = {
+        "id": p_id,
+        **data.model_dump(),
+        "created_at": datetime.utcnow()
+    }
+    await db.products.insert_one(doc)
+    return ProductResponse.model_validate(Product(**doc))
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
 async def get_product(
     product_id: int,
-    db: AsyncSession = Depends(get_db),
+    db = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(select(Product).where(Product.id == product_id))
-    product = result.scalar_one_or_none()
-    if not product:
+    doc = await db.products.find_one({"id": product_id})
+    if not doc:
         raise HTTPException(404, "Product not found")
-    return ProductResponse.model_validate(product)
+    return ProductResponse.model_validate(Product(**doc))

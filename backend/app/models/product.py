@@ -1,20 +1,16 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from app.core.database import Base
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
 
 
-class Product(Base):
-    __tablename__ = "products"
+class Product(BaseModel):
+    id: int
+    name: str
+    category: str
+    description: Optional[str] = None
+    unit: str = "kg"
+    image_url: Optional[str] = None
+    created_at: Optional[datetime] = None
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False, index=True)
-    category = Column(String(100), nullable=False, index=True)  # vegetable, fruit, grain, etc.
-    description = Column(Text)
-    unit = Column(String(50), default="kg")  # kg, quintal, ton, dozen, piece
-    image_url = Column(String(500))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    inventory = relationship("Inventory", back_populates="product")
-    procurements = relationship("Procurement", back_populates="product")
+    class Config:
+        from_attributes = True

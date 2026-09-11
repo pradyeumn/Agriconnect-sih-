@@ -1,20 +1,17 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from app.core.database import Base
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
 
 
-class Notification(Base):
-    __tablename__ = "notifications"
+class Notification(BaseModel):
+    id: int
+    user_id: int
+    title: str
+    message: str
+    notification_type: Optional[str] = None
+    is_read: bool = False
+    link: Optional[str] = None
+    created_at: Optional[datetime] = None
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    title = Column(String(255), nullable=False)
-    message = Column(Text, nullable=False)
-    notification_type = Column(String(50))  # order, procurement, allocation, inventory, system
-    is_read = Column(Boolean, default=False)
-    link = Column(String(500))  # optional deep link
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    user = relationship("User", back_populates="notifications")
+    class Config:
+        from_attributes = True

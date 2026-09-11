@@ -1,44 +1,32 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Text
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from app.core.database import Base
+from pydantic import BaseModel
+from typing import Optional, List
+from datetime import datetime
 
 
-class Order(Base):
-    __tablename__ = "orders"
+class OrderItem(BaseModel):
+    id: int
+    order_id: int
+    inventory_id: int
+    quantity: float
+    price_per_unit: float
+    subtotal: float
 
-    id = Column(Integer, primary_key=True, index=True)
-    buyer_id = Column(Integer, ForeignKey("buyers.id", ondelete="CASCADE"), nullable=False, index=True)
-    status = Column(String(30), default="pending")
-    # Status flow: pending -> confirmed -> packed -> dispatched -> delivered -> completed
-    # Or: pending -> cancelled
-    # Farmer actions: pending -> accepted / rejected
-    farmer_status = Column(String(20), default="pending")  # pending, accepted, rejected
-
-    total_amount = Column(Float, nullable=False)
-    delivery_address = Column(String(500))
-    delivery_lat = Column(Float)
-    delivery_lng = Column(Float)
-    notes = Column(Text)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    buyer = relationship("Buyer", back_populates="orders")
-    items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    class Config:
+        from_attributes = True
 
 
-class OrderItem(Base):
-    __tablename__ = "order_items"
+class Order(BaseModel):
+    id: int
+    buyer_id: int
+    status: str = "pending"
+    farmer_status: str = "pending"
+    total_amount: float
+    delivery_address: Optional[str] = None
+    delivery_lat: Optional[float] = None
+    delivery_lng: Optional[float] = None
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    inventory_id = Column(Integer, ForeignKey("inventory.id"), nullable=False, index=True)
-    quantity = Column(Float, nullable=False)
-    price_per_unit = Column(Float, nullable=False)
-    subtotal = Column(Float, nullable=False)
-
-    # Relationships
-    order = relationship("Order", back_populates="items")
-    inventory = relationship("Inventory", back_populates="order_items")
+    class Config:
+        from_attributes = True

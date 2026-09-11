@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Sprout, Eye, EyeOff, Mail, Lock, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatErrorMessage } from "@/lib/api";
 import toast from "react-hot-toast";
 
 export default function LoginPage() {
@@ -26,8 +27,7 @@ export default function LoginPage() {
       else router.push("/buyer");
       toast.success("Welcome back!");
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { detail?: string } } };
-      toast.error(error.response?.data?.detail || "Invalid credentials");
+      toast.error(formatErrorMessage(err, "Invalid credentials"));
     } finally {
       setLoading(false);
     }

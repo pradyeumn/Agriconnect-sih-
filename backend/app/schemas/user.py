@@ -28,6 +28,34 @@ class UserCreate(BaseModel):
         return v
 
 
+class FarmerRegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    phone: str
+    village: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    farm_size: Optional[float] = None
+    crops: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class BuyerRegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
 class UserResponse(BaseModel):
     id: int
     email: str
